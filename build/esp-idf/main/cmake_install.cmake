@@ -1,4 +1,4 @@
-# Install script for directory: C:/Users/Lly/Desktop/writeboot_WiFi/main
+# Install script for directory: C:/Users/Lly/Desktop/ESP32Project/writeboot_WiFi/main
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)

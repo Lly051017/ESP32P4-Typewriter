@@ -1,13 +1,13 @@
 # Target labels
  bootloader
 # Source files and their labels
-C:/Users/Lly/Desktop/writeboot_WiFi/build/CMakeFiles/bootloader
-C:/Users/Lly/Desktop/writeboot_WiFi/build/CMakeFiles/bootloader.rule
-C:/Users/Lly/Desktop/writeboot_WiFi/build/CMakeFiles/bootloader-complete.rule
-C:/Users/Lly/Desktop/writeboot_WiFi/build/bootloader-prefix/src/bootloader-stamp/bootloader-build.rule
-C:/Users/Lly/Desktop/writeboot_WiFi/build/bootloader-prefix/src/bootloader-stamp/bootloader-configure.rule
-C:/Users/Lly/Desktop/writeboot_WiFi/build/bootloader-prefix/src/bootloader-stamp/bootloader-download.rule
-C:/Users/Lly/Desktop/writeboot_WiFi/build/bootloader-prefix/src/bootloader-stamp/bootloader-install.rule
-C:/Users/Lly/Desktop/writeboot_WiFi/build/bootloader-prefix/src/bootloader-stamp/bootloader-mkdir.rule
-C:/Users/Lly/Desktop/writeboot_WiFi/build/bootloader-prefix/src/bootloader-stamp/bootloader-patch.rule
-C:/Users/Lly/Desktop/writeboot_WiFi/build/bootloader-prefix/src/bootloader-stamp/bootloader-update.rule
+C:/Users/Lly/Desktop/ESP32Project/writeboot_WiFi/build/CMakeFiles/bootloader
+C:/Users/Lly/Desktop/ESP32Project/writeboot_WiFi/build/CMakeFiles/bootloader.rule
+C:/Users/Lly/Desktop/ESP32Project/writeboot_WiFi/build/CMakeFiles/bootloader-complete.rule
+C:/Users/Lly/Desktop/ESP32Project/writeboot_WiFi/build/bootloader-prefix/src/bootloader-stamp/bootloader-build.rule
+C:/Users/Lly/Desktop/ESP32Project/writeboot_WiFi/build/bootloader-prefix/src/bootloader-stamp/bootloader-configure.rule
+C:/Users/Lly/Desktop/ESP32Project/writeboot_WiFi/build/bootloader-prefix/src/bootloader-stamp/bootloader-download.rule
+C:/Users/Lly/Desktop/ESP32Project/writeboot_WiFi/build/bootloader-prefix/src/bootloader-stamp/bootloader-install.rule
+C:/Users/Lly/Desktop/ESP32Project/writeboot_WiFi/build/bootloader-prefix/src/bootloader-stamp/bootloader-mkdir.rule
+C:/Users/Lly/Desktop/ESP32Project/writeboot_WiFi/build/bootloader-prefix/src/bootloader-stamp/bootloader-patch.rule
+C:/Users/Lly/Desktop/ESP32Project/writeboot_WiFi/build/bootloader-prefix/src/bootloader-stamp/bootloader-update.rule

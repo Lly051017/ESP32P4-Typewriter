@@ -1,12 +1,16 @@
 set(src_dirs
             LED
 			KEY
-            UART)
+            UART
+            STEPPER
+            GCODE)
 
 set(include_dirs
             LED
 			KEY
-            UART)
+            UART
+            STEPPER
+            GCODE)
 
 set(requires
             driver

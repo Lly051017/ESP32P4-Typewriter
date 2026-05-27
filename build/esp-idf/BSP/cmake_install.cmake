@@ -1,4 +1,4 @@
-# Install script for directory: C:/Users/Lly/Desktop/writeboot_WiFi/components/BSP
+# Install script for directory: C:/Users/Lly/Desktop/ESP32Project/writeboot_WiFi/components/BSP
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)

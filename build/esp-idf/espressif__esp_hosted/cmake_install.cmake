@@ -1,4 +1,4 @@
-# Install script for directory: C:/Users/Lly/Desktop/writeboot_WiFi/managed_components/espressif__esp_hosted
+# Install script for directory: C:/Users/Lly/Desktop/ESP32Project/writeboot_WiFi/managed_components/espressif__esp_hosted
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)

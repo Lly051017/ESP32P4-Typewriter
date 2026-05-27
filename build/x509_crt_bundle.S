@@ -1,4 +1,4 @@
-/* * Data converted from C:/Users/Lly/Desktop/writeboot_WiFi/build/esp-idf/mbedtls/x509_crt_bundle
+/* * Data converted from C:/Users/Lly/Desktop/ESP32Project/writeboot_WiFi/build/esp-idf/mbedtls/x509_crt_bundle
  */
 .data
 #if !defined (__APPLE__) && !defined (__linux__)

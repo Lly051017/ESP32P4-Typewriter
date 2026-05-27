@@ -17,4 +17,4 @@ set confirm off
 set confirm on
 
 # Load application symbols
-file C:/Users/Lly/Desktop/writeboot_WiFi/build/bootloader/bootloader.elf
+file C:/Users/Lly/Desktop/ESP32Project/writeboot_WiFi/build/bootloader/bootloader.elf

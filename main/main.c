@@ -17,6 +17,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include "uart.h"
+#include "gcode_parser.h"
+#include "plotter.h"
+#include "writer_controller.h"
+#include "stepper_motor.h"
 #include "wifi_config.h"
 #include "lwip_demo.h"
 
@@ -186,6 +190,92 @@ void led_task(void *pvParameters)
 void Gcode_Write_Task(void *pvParameters)
 {
     pvParameters = pvParameters;
+stepper_delay_ms(2000);
+    
+    uart0_printf("\n=== Step 1: Test PLOTTER module (should work!) ===\n");
+    uart0_printf("Initializing plotter...\n");
+    plotter_init(200, 50);
+    stepper_delay_ms(500);
+    
+    uart0_printf("\nTesting plotter move...\n");
+    plotter_move_to(20, 20, 0);
+    uart0_printf("Plotter move done!\n");
+    stepper_delay_ms(1000);
+    
+    plotter_move_to(60, 60, 0);
+    uart0_printf("Plotter move 2 done!\n");
+    stepper_delay_ms(1000);
+    
+    uart0_printf("\n=== Step 2: Test direct motor commands (verify motors work) ===\n");
+    esp_err_t ret;
+    
+    uart0_printf("\nTesting X axis directly...\n");
+    ret = motor_position_mode(MOTOR_ID_X, DIRECTION_CW, 200, 50, 3200, POS_MODE_RELATIVE);
+    uart0_printf("X axis command: %s\n", ret == ESP_OK ? "SUCCESS" : "FAILED");
+    motor_wait_reached(MOTOR_ID_X);
+    uart0_printf("X axis done!\n");
+    stepper_delay_ms(1000);
+    
+    uart0_printf("\nTesting Y axis directly...\n");
+    ret = motor_position_mode(MOTOR_ID_Y, DIRECTION_CW, 200, 50, 3200, POS_MODE_RELATIVE);
+    uart0_printf("Y axis command: %s\n", ret == ESP_OK ? "SUCCESS" : "FAILED");
+    motor_wait_reached(MOTOR_ID_Y);
+    uart0_printf("Y axis done!\n");
+    stepper_delay_ms(1000);
+    
+    uart0_printf("\n=== Step 3: Now test GCode Writer ===\n");
+    writer_config_t config = {
+        .steps_per_mm = {80.0f, 80.0f, 40.0f},
+        .max_rate_mm_min = {3000.0f, 3000.0f, 1000.0f},
+        .acceleration_mm_s2 = {500.0f, 500.0f, 200.0f},
+        .max_travel_mm = {200.0f, 200.0f, 50.0f},
+        .default_feed_rate = 500.0f,
+        .rapid_rate = 3000.0f,
+        .pen_up_pos = 5.0f,
+        .pen_down_pos = 0.0f,
+        .pen_lift_delay_ms = 100,
+        .motor_ids = {MOTOR_ID_X, MOTOR_ID_Y, MOTOR_ID_Z},
+        .invert_dir = {false, false, false},
+    };
+    
+    uart0_printf("\nInitializing writer...\n");
+    writer_init(&config);
+    stepper_delay_ms(500);
+    
+    uart0_printf("\n=== Plotter test done, motor test done, now writer test ===\n");
+    
+    uart0_printf("\n--- Drawing Square --- \n");
+    writer_execute_gcode("G21");               writer_wait_idle();
+    writer_execute_gcode("G90");               writer_wait_idle();
+    writer_execute_gcode("G0 Z5");             writer_wait_idle();
+    writer_execute_gcode("G0 X10 Y10");        writer_wait_idle();
+    writer_execute_gcode("G1 Z0 F500");        writer_wait_idle();
+    writer_execute_gcode("G1 X90 Y10 F300");   writer_wait_idle();
+    writer_execute_gcode("G1 X90 Y90");        writer_wait_idle();
+    writer_execute_gcode("G1 X10 Y90");        writer_wait_idle();
+    writer_execute_gcode("G1 X10 Y10");        writer_wait_idle();
+    writer_execute_gcode("G0 Z5");             writer_wait_idle();
+    stepper_delay_ms(2000);
+    
+    uart0_printf("\n=== GCode Writer Test Complete! ===\n");
+    stepper_delay_ms(1000);
+
+  
+    /* 使用 Gcode 绘制字母 "A" */
+    uart0_printf("\n=== Drawing Letter 'A' with Gcode ===\n");
+    writer_execute_gcode("G0 Z5");             /* 抬笔 */
+    writer_execute_gcode("G0 X10 Y10");        /* 移动到A左下角起点 */
+    writer_execute_gcode("G1 Z0 F500");        /* 落笔 */
+    writer_execute_gcode("G1 X300 Y500");        /* 画A的左边斜线到顶 */
+    writer_execute_gcode("G1 X500 Y100");        /* 画A的右边斜线到底 */
+    writer_execute_gcode("G0 Z5");             /* 抬笔 */
+    writer_execute_gcode("G0 X200 Y250");        /* 移动到A横杆起点 */
+    writer_execute_gcode("G1 Z0 F500");        /* 落笔 */
+    writer_execute_gcode("G1 X400 Y250");       /* 画A的横杆 */
+    writer_execute_gcode("G0 Z5");             /* 抬笔 */
+    writer_wait_idle();
+    
+    uart0_printf("\n=== Letter 'A' Drawn Successfully! ===\n");
 
     /** 任务主循环 */
     while (1)

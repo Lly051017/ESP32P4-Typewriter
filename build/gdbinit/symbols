@@ -13,8 +13,8 @@ end
 
 # Load bootloader symbols
 set confirm off
-    add-symbol-file C:/Users/Lly/Desktop/writeboot_WiFi/build/bootloader/bootloader.elf
+    add-symbol-file C:/Users/Lly/Desktop/ESP32Project/writeboot_WiFi/build/bootloader/bootloader.elf
 set confirm on
 
 # Load application symbols
-file C:/Users/Lly/Desktop/writeboot_WiFi/build/wifi_tcpserver.elf
+file C:/Users/Lly/Desktop/ESP32Project/writeboot_WiFi/build/wifi_tcpserver.elf
