@@ -83,24 +83,34 @@ void plotter_move_to(float x, float y, float z)
         uart0_printf("[Plotter] Moving Z axis: speed=%d, pulses=%d\n", g_plotter.speed / 2, abs(pulses_z));
         ret = motor_position_mode(MOTOR_ID_Z, dir_z, g_plotter.speed / 2, g_plotter.accel, abs(pulses_z), POS_MODE_RELATIVE);
         uart0_printf("[Plotter] Z command result: %s\n", ret == ESP_OK ? "SUCCESS" : "FAILED");
-        motor_wait_reached(MOTOR_ID_Z);
+        motor_wait_reached_ex(MOTOR_ID_Z, abs(pulses_z), g_plotter.speed / 2);
     }
-    
+
+    bool x_queued = false, y_queued = false;
+
     if (pulses_x != 0) {
-        uart0_printf("[Plotter] Moving X axis: speed=%d, pulses=%d\n", g_plotter.speed, abs(pulses_x));
+        uart0_printf("[Plotter] Queuing X: speed=%d, pulses=%d\n", g_plotter.speed, abs(pulses_x));
         ret = motor_position_mode(MOTOR_ID_X, dir_x, g_plotter.speed, g_plotter.accel, abs(pulses_x), POS_MODE_RELATIVE);
         uart0_printf("[Plotter] X command result: %s\n", ret == ESP_OK ? "SUCCESS" : "FAILED");
-        stepper_delay_ms(50);  // 添加延迟，确保命令被正确接收
+        x_queued = (ret == ESP_OK);
     }
     if (pulses_y != 0) {
-        uart0_printf("[Plotter] Moving Y axis: speed=%d, pulses=%d\n", g_plotter.speed, abs(pulses_y));
+        uart0_printf("[Plotter] Queuing Y: speed=%d, pulses=%d\n", g_plotter.speed, abs(pulses_y));
         ret = motor_position_mode(MOTOR_ID_Y, dir_y, g_plotter.speed, g_plotter.accel, abs(pulses_y), POS_MODE_RELATIVE);
         uart0_printf("[Plotter] Y command result: %s\n", ret == ESP_OK ? "SUCCESS" : "FAILED");
-        stepper_delay_ms(50);  // 添加延迟，确保命令被正确接收
+        y_queued = (ret == ESP_OK);
     }
-    
-    if (pulses_x != 0) motor_wait_reached(MOTOR_ID_X);
-    if (pulses_y != 0) motor_wait_reached(MOTOR_ID_Y);
+
+    if (x_queued || y_queued) {
+        uart0_printf("[Plotter] Waiting for X+Y\r\n");
+        if (x_queued && y_queued) {
+            motor_wait_reached_xy(abs(pulses_x), g_plotter.speed, abs(pulses_y), g_plotter.speed);
+        } else if (x_queued) {
+            motor_wait_reached_ex(MOTOR_ID_X, abs(pulses_x), g_plotter.speed);
+        } else {
+            motor_wait_reached_ex(MOTOR_ID_Y, abs(pulses_y), g_plotter.speed);
+        }
+    }
     
     g_plotter.current_pos.x = x;
     g_plotter.current_pos.y = y;

@@ -2,6 +2,8 @@
 
 This module provides a lightweight GCode parser and motion control system for ESP32P4, extracted and simplified from FluidNC for the writing machine project.
 
+**Version**: V2.0 (2026-05-29) - Added multi-motor parallel control support
+
 ---
 
 ## Architecture
@@ -17,6 +19,7 @@ This module provides a lightweight GCode parser and motion control system for ES
 │  - Line and arc drawing                                      │
 │  - Status callbacks                                          │
 │  - GCode command queue                                       │
+│  - motor_move_callback() → Parallel motor control            │
 ├─────────────────────────────────────────────────────────────┤
 │  motion_control.c/h - Motion execution                       │
 │  - Linear interpolation                                      │
@@ -35,8 +38,74 @@ This module provides a lightweight GCode parser and motion control system for ES
 │  - G90/G91 distance mode                                    │
 │  - F feed rate, X/Y/Z coordinates                           │
 │  - I/J/K arc offsets                                        │
+├─────────────────────────────────────────────────────────────┤
+│  stepper_motor.c/h - Multi-motor parallel control            │
+│  - motor_tasks_init() - Create per-motor FreeRTOS tasks      │
+│  - motor_move_submit() - Submit command to motor queue       │
+│  - motor_wait_done() - Wait for completion via EventGroup    │
+│  - mt1(X), mt2(Y), mt3(Z), mt4(A) - Independent tasks        │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Multi-Motor Parallel Control (NEW)
+
+### Overview
+
+The V2.0 architecture implements true parallel motor control:
+
+- **Independent Tasks**: Each motor has its own FreeRTOS task (mt1-mt4)
+- **Command Queues**: Each motor has a dedicated command queue
+- **Signal Isolation**: Motors only respond to their own driver status
+- **Parallel Execution**: X/Y/Z start simultaneously, no waiting for others
+
+### Execution Flow
+
+```
+writer_execute_gcode("G1 X30 Y10 F500")
+  │
+  ↓
+g_command_queue (FreeRTOS Queue)
+  │
+  ↓
+writer_task() [后台任务]
+  │
+  ↓
+gcode_parse_line() → gcode_block_t
+  │
+  ↓
+process_gcode_block() → mc_linear()
+  │
+  ↓
+motor_move_callback()
+  │
+  ├─ motor_clear_done(X|Y|Z)
+  ├─ motor_move_submit(X, ...) → X队列 ──→ mt1任务 ──→ 发送位置命令
+  ├─ motor_move_submit(Y, ...) → Y队列 ──→ mt2任务 ──→ 发送位置命令
+  ├─ motor_move_submit(Z, ...) → Z队列 ──→ mt3任务 ──→ 发送位置命令
+  │                                            │
+  │                                            ↓
+  │                                   各任务独立轮询 status&0x02
+  │                                            │
+  │                                            ↓
+  │                                   到位 → 设置 EventGroup 位
+  │
+  ↓
+motor_wait_done(X|Y|Z, 15000) ← 等待所有完成位
+  │
+  ↓
+返回 → writer_wait_idle() 返回
+```
+
+### Key Benefits
+
+| Feature | Description |
+|---------|-------------|
+| **True Parallelism** | X and Y move simultaneously, not sequentially |
+| **Independent Completion** | Each motor signals completion independently |
+| **No Blocking** | Motor tasks run independently, don't wait for others |
+| **Event-driven** | Uses FreeRTOS EventGroup for completion signaling |
 
 ---
 

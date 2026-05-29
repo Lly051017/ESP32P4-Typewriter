@@ -76,6 +76,17 @@ typedef struct {
 } motor_info_t;
 
 /**
+ * @brief 电机运动命令（异步队列用）
+ */
+typedef struct {
+    motor_direction_t dir;
+    uint16_t speed_rpm;
+    uint8_t accel;
+    int32_t pulses;
+    position_mode_t mode;
+} motor_move_cmd_t;
+
+/**
  * @brief 坐标系结构体
  */
 typedef struct {
@@ -207,5 +218,40 @@ void stepper_delay_ms(uint32_t ms);
  * @retval 无
  */
 void motor_wait_reached(uint8_t motor_id);
+
+/**
+ * @brief  等待电机到位(带脉冲时间估算)
+ * @param  motor_id: 电机ID
+ * @param  pulses: 脉冲数(用于时间估算)
+ * @param  speed_rpm: 速度(RPM，用于时间估算)
+ * @retval 无
+ */
+void motor_wait_reached_ex(uint8_t motor_id, int32_t pulses, uint16_t speed_rpm);
+
+/**
+ * @brief  等待X和Y轴同时到位(同步运动用)
+ * @param  x_pulses: X轴脉冲数
+ * @param  x_rpm: X轴速度
+ * @param  y_pulses: Y轴脉冲数
+ * @param  y_rpm: Y轴速度
+ * @retval 无
+ * @note  发完X/Y位置命令后调用sync_trigger，然后调用本函数等待
+ */
+void motor_wait_reached_xy(int32_t x_pulses, uint16_t x_rpm, int32_t y_pulses, uint16_t y_rpm);
+
+/* ========== 多电机并行控制 API ========== */
+
+#define MOTOR_MASK_X   0x01
+#define MOTOR_MASK_Y   0x02
+#define MOTOR_MASK_Z   0x04
+#define MOTOR_MASK_A   0x08
+
+esp_err_t motor_tasks_init(void);
+bool motor_is_moving(uint8_t motor_id);
+esp_err_t motor_move_submit(uint8_t motor_id, motor_direction_t dir,
+                            uint16_t speed_rpm, uint8_t accel,
+                            int32_t pulses, position_mode_t mode);
+esp_err_t motor_wait_done(uint32_t motor_mask, uint32_t timeout_ms);
+void motor_clear_done(uint32_t motor_mask);
 
 #endif

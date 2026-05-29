@@ -52,7 +52,7 @@ TaskHandle_t KEYTask_Handler;     /**< 按键任务句柄 */
  * @{
  */
 #define Gcode_Write_TASK_PORT 12           /**< G代码写字任务优先级 */
-#define Gcode_Write_STK_SIZE 2048          /**< G代码写字任务堆栈大小(字节) */
+#define Gcode_Write_STK_SIZE 8192          /**< G代码写字任务堆栈大小(字节) */
 TaskHandle_t GcodeWriteTask_Handler;      /**< G代码写字任务句柄 */
 /** @} */
 
@@ -90,12 +90,13 @@ void app_main(void)
     /** 初始化各外设 */
     led_init();   /**< LED初始化 */
     key_init();   /**< 按键初始化 */
-    uart0_init(); /**< UART0初始化(用于调试输出) */
+    stepper_motor_init(UART_NUM_2, GPIO_NUM_11, GPIO_NUM_12); /**< 电机UART: GPIO11=TX, GPIO12=RX */
+    motor_tasks_init();  /**< 启动 per-motor 并行控制任务 */
 
     /** 打印启动信息 */
-    uart0_printf("ESP32-P4 WiFi Plotter\r\n");
-    uart0_printf("WiFi TCPServer Test\r\n");
-    uart0_printf("WKS SMART\r\n");
+    printf("ESP32-P4 WiFi Plotter\r\n");
+    printf("WiFi TCPServer Test\r\n");
+    printf("WKS SMART\r\n");
 
     /** 初始化WiFi(Station模式) */
     wifi_sta_init();
@@ -189,41 +190,14 @@ void led_task(void *pvParameters)
  */
 void Gcode_Write_Task(void *pvParameters)
 {
-    pvParameters = pvParameters;
-stepper_delay_ms(2000);
-    
-    uart0_printf("\n=== Step 1: Test PLOTTER module (should work!) ===\n");
-    uart0_printf("Initializing plotter...\n");
+    (void)pvParameters;
+
+    stepper_delay_ms(2000);
+
+    printf("\n=== ESP32 Plotter GCode Demo ===\n");
+    printf("Plotter initializing...\n");
     plotter_init(200, 50);
-    stepper_delay_ms(500);
-    
-    uart0_printf("\nTesting plotter move...\n");
-    plotter_move_to(20, 20, 0);
-    uart0_printf("Plotter move done!\n");
-    stepper_delay_ms(1000);
-    
-    plotter_move_to(60, 60, 0);
-    uart0_printf("Plotter move 2 done!\n");
-    stepper_delay_ms(1000);
-    
-    uart0_printf("\n=== Step 2: Test direct motor commands (verify motors work) ===\n");
-    esp_err_t ret;
-    
-    uart0_printf("\nTesting X axis directly...\n");
-    ret = motor_position_mode(MOTOR_ID_X, DIRECTION_CW, 200, 50, 3200, POS_MODE_RELATIVE);
-    uart0_printf("X axis command: %s\n", ret == ESP_OK ? "SUCCESS" : "FAILED");
-    motor_wait_reached(MOTOR_ID_X);
-    uart0_printf("X axis done!\n");
-    stepper_delay_ms(1000);
-    
-    uart0_printf("\nTesting Y axis directly...\n");
-    ret = motor_position_mode(MOTOR_ID_Y, DIRECTION_CW, 200, 50, 3200, POS_MODE_RELATIVE);
-    uart0_printf("Y axis command: %s\n", ret == ESP_OK ? "SUCCESS" : "FAILED");
-    motor_wait_reached(MOTOR_ID_Y);
-    uart0_printf("Y axis done!\n");
-    stepper_delay_ms(1000);
-    
-    uart0_printf("\n=== Step 3: Now test GCode Writer ===\n");
+
     writer_config_t config = {
         .steps_per_mm = {80.0f, 80.0f, 40.0f},
         .max_rate_mm_min = {3000.0f, 3000.0f, 1000.0f},
@@ -237,49 +211,42 @@ stepper_delay_ms(2000);
         .motor_ids = {MOTOR_ID_X, MOTOR_ID_Y, MOTOR_ID_Z},
         .invert_dir = {false, false, false},
     };
-    
-    uart0_printf("\nInitializing writer...\n");
+
     writer_init(&config);
-    stepper_delay_ms(500);
-    
-    uart0_printf("\n=== Plotter test done, motor test done, now writer test ===\n");
-    
-    uart0_printf("\n--- Drawing Square --- \n");
-    writer_execute_gcode("G21");               writer_wait_idle();
-    writer_execute_gcode("G90");               writer_wait_idle();
+    printf("Writer initialized.\n");
+
+    printf("\n--- GCode: Draw Square (20x20mm) ---\n");
+    writer_execute_gcode("G21");              writer_wait_idle();
+    writer_execute_gcode("G90");              writer_wait_idle();
+    writer_execute_gcode("G0 Z5");            writer_wait_idle();
+    writer_execute_gcode("G0 X10 Y10");       writer_wait_idle();
+    writer_execute_gcode("G1 Z0 F500");       writer_wait_idle();
+    writer_execute_gcode("G1 X30 Y10");       writer_wait_idle();
+    writer_execute_gcode("G1 X30 Y30");       writer_wait_idle();
+    writer_execute_gcode("G1 X10 Y30");       writer_wait_idle();
+    writer_execute_gcode("G1 X10 Y10");       writer_wait_idle();
+    writer_execute_gcode("G0 Z5");            writer_wait_idle();
+
+    printf("\n--- GCode: Diagonal Line (X+Y simultaneous) ---\n");
+    writer_execute_gcode("G0 X50 Y50");       writer_wait_idle();
+    writer_execute_gcode("G1 Z0 F500");       writer_wait_idle();
+    writer_execute_gcode("G1 X100 Y100");      writer_wait_idle();
     writer_execute_gcode("G0 Z5");             writer_wait_idle();
+
+    printf("\n--- GCode: Draw Letter 'A' ---\n");
     writer_execute_gcode("G0 X10 Y10");        writer_wait_idle();
-    writer_execute_gcode("G1 Z0 F500");        writer_wait_idle();
-    writer_execute_gcode("G1 X90 Y10 F300");   writer_wait_idle();
-    writer_execute_gcode("G1 X90 Y90");        writer_wait_idle();
-    writer_execute_gcode("G1 X10 Y90");        writer_wait_idle();
-    writer_execute_gcode("G1 X10 Y10");        writer_wait_idle();
+    writer_execute_gcode("G1 Z0 F500");       writer_wait_idle();
+    writer_execute_gcode("G1 X30 Y50");        writer_wait_idle();
+    writer_execute_gcode("G1 X50 Y10");        writer_wait_idle();
     writer_execute_gcode("G0 Z5");             writer_wait_idle();
-    stepper_delay_ms(2000);
-    
-    uart0_printf("\n=== GCode Writer Test Complete! ===\n");
-    stepper_delay_ms(1000);
+    writer_execute_gcode("G0 X20 Y30");        writer_wait_idle();
+    writer_execute_gcode("G1 Z0 F500");        writer_wait_idle();
+    writer_execute_gcode("G1 X40 Y30");        writer_wait_idle();
+    writer_execute_gcode("G0 Z5");             writer_wait_idle();
 
-  
-    /* 使用 Gcode 绘制字母 "A" */
-    uart0_printf("\n=== Drawing Letter 'A' with Gcode ===\n");
-    writer_execute_gcode("G0 Z5");             /* 抬笔 */
-    writer_execute_gcode("G0 X10 Y10");        /* 移动到A左下角起点 */
-    writer_execute_gcode("G1 Z0 F500");        /* 落笔 */
-    writer_execute_gcode("G1 X300 Y500");        /* 画A的左边斜线到顶 */
-    writer_execute_gcode("G1 X500 Y100");        /* 画A的右边斜线到底 */
-    writer_execute_gcode("G0 Z5");             /* 抬笔 */
-    writer_execute_gcode("G0 X200 Y250");        /* 移动到A横杆起点 */
-    writer_execute_gcode("G1 Z0 F500");        /* 落笔 */
-    writer_execute_gcode("G1 X400 Y250");       /* 画A的横杆 */
-    writer_execute_gcode("G0 Z5");             /* 抬笔 */
-    writer_wait_idle();
-    
-    uart0_printf("\n=== Letter 'A' Drawn Successfully! ===\n");
+    printf("\n=== All GCode Commands Complete! ===\n");
 
-    /** 任务主循环 */
-    while (1)
-    {
-        vTaskDelay(10); /**< 延时10ms */
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }

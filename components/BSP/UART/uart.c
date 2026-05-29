@@ -162,12 +162,12 @@ void uart0_init(void)
     uart0_config.flow_ctrl = UART_HW_FLOWCTRL_DISABLE; /**< 无硬件流控 */
     uart0_config.source_clk = UART_SCLK_DEFAULT;       /**< 默认时钟源 */
 
+    /** 安装UART驱动，创建事件队列（必须先于 param_config） */
+    ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, UART0_BUF_SIZE * 2, UART0_BUF_SIZE * 2, 20, &uart0_queue, 0));
     /** 应用UART参数配置 */
     ESP_ERROR_CHECK(uart_param_config(UART_NUM_0, &uart0_config));
     /** 配置UART引脚 */
     ESP_ERROR_CHECK(uart_set_pin(UART_NUM_0, UART0_TX_PIN, UART0_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
-    /** 安装UART驱动，创建事件队列 */
-    ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, UART0_BUF_SIZE * 2, UART0_BUF_SIZE * 2, 20, &uart0_queue, 0));
 
     /** 初始化FIFO缓冲区和互斥锁 */
     fifo_init(&rx_fifo, UART0_FIFO_SIZE);
@@ -235,7 +235,7 @@ int uart0_getchar(void)
  * @param  format: 格式化字符串
  * @param  ...: 可变参数列表
  * @retval 输出的字符数
- * @note 类似printf，但输出到UART0
+ * @note 类似printf，输出到USB串口控制台（不占用UART0电机总线）
  */
 int uart0_printf(const char *format, ...)
 {
@@ -249,7 +249,7 @@ int uart0_printf(const char *format, ...)
 
     if (ret > 0)
     {
-        uart0_write(buffer, ret);
+        printf("%s", buffer);
     }
 
     return ret;

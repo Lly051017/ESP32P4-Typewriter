@@ -55,105 +55,55 @@ static void motor_move_callback(float *target, float feed_rate, bool is_rapid)
     float dx = target[WRITER_X_AXIS] - g_current_pos[WRITER_X_AXIS];
     float dy = target[WRITER_Y_AXIS] - g_current_pos[WRITER_Y_AXIS];
     float dz = target[WRITER_Z_AXIS] - g_current_pos[WRITER_Z_AXIS];
-    
-    uart0_printf("[Motor] ==========================\n");
-    uart0_printf("[Motor] Current: X=%.1f Y=%.1f Z=%.1f\n", g_current_pos[0], g_current_pos[1], g_current_pos[2]);
-    uart0_printf("[Motor] Target: X=%.1f Y=%.1f Z=%.1f\n", target[0], target[1], target[2]);
-    uart0_printf("[Motor] Delta: dx=%.2f dy=%.2f dz=%.2f\n", dx, dy, dz);
-    
-    uint8_t status;
-    if (motor_read_status(g_config.motor_ids[WRITER_X_AXIS], &status) == ESP_OK) {
-        uart0_printf("[Motor] X motor(%d) status: enabled=%d, reached=%d\n", 
-                     g_config.motor_ids[WRITER_X_AXIS], (status&0x01), (status&0x02)>>1);
-    }
-    if (motor_read_status(g_config.motor_ids[WRITER_Y_AXIS], &status) == ESP_OK) {
-        uart0_printf("[Motor] Y motor(%d) status: enabled=%d, reached=%d\n", 
-                     g_config.motor_ids[WRITER_Y_AXIS], (status&0x01), (status&0x02)>>1);
-    }
-    if (motor_read_status(g_config.motor_ids[WRITER_Z_AXIS], &status) == ESP_OK) {
-        uart0_printf("[Motor] Z motor(%d) status: enabled=%d, reached=%d\n", 
-                     g_config.motor_ids[WRITER_Z_AXIS], (status&0x01), (status&0x02)>>1);
-    }
-    
+
     int32_t pulses_x = (int32_t)(dx * g_config.steps_per_mm[WRITER_X_AXIS]);
     int32_t pulses_y = (int32_t)(dy * g_config.steps_per_mm[WRITER_Y_AXIS]);
     int32_t pulses_z = (int32_t)(dz * g_config.steps_per_mm[WRITER_Z_AXIS]);
-    
-    uart0_printf("[Motor] Pulses: X=%d Y=%d Z=%d\n", pulses_x, pulses_y, pulses_z);
-    
+
     if (abs(pulses_x) < 2 && abs(pulses_y) < 2 && abs(pulses_z) < 2) {
-        uart0_printf("[Motor] Movement too small, skipping\n");
         memcpy(g_current_pos, target, sizeof(float) * WRITER_MAX_AXES);
         return;
     }
-    
+
+    uint16_t speed_rpm = 200;
+    uint8_t accel = 50;
     motor_direction_t x_dir = (pulses_x >= 0) ? DIRECTION_CW : DIRECTION_CCW;
     motor_direction_t y_dir = (pulses_y >= 0) ? DIRECTION_CW : DIRECTION_CCW;
     motor_direction_t z_dir = (pulses_z >= 0) ? DIRECTION_CW : DIRECTION_CCW;
-    
+
     if (g_config.invert_dir[WRITER_X_AXIS]) x_dir = (x_dir == DIRECTION_CW) ? DIRECTION_CCW : DIRECTION_CW;
     if (g_config.invert_dir[WRITER_Y_AXIS]) y_dir = (y_dir == DIRECTION_CW) ? DIRECTION_CCW : DIRECTION_CW;
     if (g_config.invert_dir[WRITER_Z_AXIS]) z_dir = (z_dir == DIRECTION_CW) ? DIRECTION_CCW : DIRECTION_CW;
-    
-    // 使用和 plotter.c 一样的简单固定速度！
-    uint16_t speed_rpm = 200;
-    uart0_printf("[Motor] Fixed speed: %d RPM (feed_rate=%.1f)\n", speed_rpm, feed_rate);
-    
-    uint8_t accel = 50;
-    
-    uart0_printf("[Motor] Dir: X=%s Y=%s Z=%s, Speed=%d RPM\n", 
-                 x_dir == DIRECTION_CW ? "CW" : "CCW",
-                 y_dir == DIRECTION_CW ? "CW" : "CCW",
-                 z_dir == DIRECTION_CW ? "CW" : "CCW",
-                 speed_rpm);
-    
-    uart0_printf("[Motor] Motor IDs: X=%d Y=%d Z=%d\n", 
-                 g_config.motor_ids[WRITER_X_AXIS],
-                 g_config.motor_ids[WRITER_Y_AXIS],
-                 g_config.motor_ids[WRITER_Z_AXIS]);
-    
-    // 先移动 Z 轴（和 plotter.c 一样）
+
+    uint32_t mask = 0;
+
     if (abs(pulses_z) != 0) {
-        uart0_printf("[Motor] Moving Z axis: motor_id=%d, pulses=%d\n", 
-                     g_config.motor_ids[WRITER_Z_AXIS], abs(pulses_z));
-        esp_err_t ret = motor_position_mode(g_config.motor_ids[WRITER_Z_AXIS], z_dir, speed_rpm / 2, accel, abs(pulses_z), POS_MODE_RELATIVE);
-        uart0_printf("[Motor] Z axis command result: %d\n", ret);
-        uart0_printf("[Motor] Waiting for Z axis...\n");
-        motor_wait_reached(g_config.motor_ids[WRITER_Z_AXIS]);
-        uart0_printf("[Motor] Z axis reached\n");
+        motor_clear_done(MOTOR_MASK_Z);
+        motor_move_submit(MOTOR_ID_Z, z_dir, speed_rpm / 2,
+                         accel, abs(pulses_z), POS_MODE_RELATIVE);
+        mask |= MOTOR_MASK_Z;
     }
-    
-    // 再同时发送 X 和 Y 轴命令，但不使用 sync trigger
+
     if (abs(pulses_x) != 0) {
-        uart0_printf("[Motor] Moving X axis: motor_id=%d, pulses=%d\n", 
-                     g_config.motor_ids[WRITER_X_AXIS], abs(pulses_x));
-        esp_err_t ret = motor_position_mode(g_config.motor_ids[WRITER_X_AXIS], x_dir, speed_rpm, accel, abs(pulses_x), POS_MODE_RELATIVE);
-        uart0_printf("[Motor] X axis command result: %d\n", ret);
+        motor_clear_done(MOTOR_MASK_X);
+        motor_move_submit(MOTOR_ID_X, x_dir, speed_rpm,
+                         accel, abs(pulses_x), POS_MODE_RELATIVE);
+        mask |= MOTOR_MASK_X;
     }
+
     if (abs(pulses_y) != 0) {
-        uart0_printf("[Motor] Moving Y axis: motor_id=%d, pulses=%d\n", 
-                     g_config.motor_ids[WRITER_Y_AXIS], abs(pulses_y));
-        esp_err_t ret = motor_position_mode(g_config.motor_ids[WRITER_Y_AXIS], y_dir, speed_rpm, accel, abs(pulses_y), POS_MODE_RELATIVE);
-        uart0_printf("[Motor] Y axis command result: %d\n", ret);
+        motor_clear_done(MOTOR_MASK_Y);
+        motor_move_submit(MOTOR_ID_Y, y_dir, speed_rpm,
+                         accel, abs(pulses_y), POS_MODE_RELATIVE);
+        mask |= MOTOR_MASK_Y;
     }
-    
-    // 分别等待 X 和 Y 轴到位（不使用 sync trigger）
-    if (abs(pulses_x) != 0) {
-        uart0_printf("[Motor] Waiting for X axis...\n");
-        motor_wait_reached(g_config.motor_ids[WRITER_X_AXIS]);
-        uart0_printf("[Motor] X axis reached\n");
+
+    if (mask) {
+        motor_wait_done(mask, 15000);
     }
-    if (abs(pulses_y) != 0) {
-        uart0_printf("[Motor] Waiting for Y axis...\n");
-        motor_wait_reached(g_config.motor_ids[WRITER_Y_AXIS]);
-        uart0_printf("[Motor] Y axis reached\n");
-    }
-    
+
     memcpy(g_current_pos, target, sizeof(float) * WRITER_MAX_AXES);
     g_current_feed_rate = feed_rate;
-    
-    uart0_printf("[Motor] Move completed\n");
-    
     g_status.blocks_executed++;
     update_status();
 }

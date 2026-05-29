@@ -271,9 +271,215 @@ motor_sync_trigger();  // 触发同步运动
 
 ---
 
-## 4. 写字机控制 API
+## 4. 多电机并行控制 API（新增）
 
-### 4.1 初始化
+### 4.1 概述
+
+多电机并行控制系统为每个电机创建独立的 FreeRTOS 任务，实现真正意义上的并行运动控制：
+
+- **独立运动**：每个电机有独立的命令队列和状态轮询任务
+- **信号隔离**：电机仅响应自身驱动器返回的到位信号
+- **并行执行**：X/Y/Z 轴同时启动，不等待其他电机完成
+- **完成通知**：使用 EventGroup 实现多电机完成信号同步
+
+### 4.2 系统架构
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    应用层 (Application)                      │
+│  motor_move_submit() → 提交运动命令到各电机队列              │
+│  motor_wait_done()   → 等待多个电机同时完成                  │
+├─────────────────────────────────────────────────────────────┤
+│               并行控制层 (Parallel Control)                  │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐          │
+│  │  mt1 (X轴)  │  │  mt2 (Y轴)  │  │  mt3 (Z轴)  │          │
+│  │ 命令队列    │  │ 命令队列    │  │ 命令队列    │          │
+│  │ 状态轮询    │  │ 状态轮询    │  │ 状态轮询    │          │
+│  │ 完成标志    │  │ 完成标志    │  │ 完成标志    │          │
+│  └─────────────┘  └─────────────┘  └─────────────┘          │
+│                    ↓          ↓          ↓                  │
+│              s_motor_done_evt (EventGroup)                  │
+├─────────────────────────────────────────────────────────────┤
+│                    驱动层 (Driver)                           │
+│  motor_position_mode() ← s_uart_mutex 保护                  │
+│  motor_read_status_fast() ← 快速状态查询                    │
+├─────────────────────────────────────────────────────────────┤
+│                    硬件层 (Hardware)                         │
+│  ESP32-P4 UART2  →  42步进电机驱动器 x 4                    │
+│  TX: GPIO11    RX: GPIO12                                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 4.3 初始化
+
+```c
+esp_err_t motor_tasks_init(void);
+```
+
+**功能**：创建 4 个 per-motor FreeRTOS 任务和完成事件组
+
+**调用示例**：
+```c
+stepper_motor_init(UART_NUM_2, GPIO_NUM_11, GPIO_NUM_12);
+motor_tasks_init();  // 必须在 stepper_motor_init 之后调用
+```
+
+---
+
+### 4.4 提交运动命令（异步）
+
+```c
+esp_err_t motor_move_submit(uint8_t motor_id, motor_direction_t dir,
+                            uint16_t speed_rpm, uint8_t accel,
+                            int32_t pulses, pos_mode_t mode);
+```
+
+**功能**：将运动命令提交到指定电机的命令队列（非阻塞）
+
+**参数解析**：与 `motor_position_mode` 相同
+
+**返回值**：
+- `ESP_OK`：命令成功入队
+- `ESP_FAIL`：队列满，命令被拒绝
+
+**调用示例**：
+```c
+// 同时提交 X 和 Y 轴运动命令
+motor_move_submit(MOTOR_ID_X, DIRECTION_CW, 200, 50, 1600, POS_MODE_RELATIVE);
+motor_move_submit(MOTOR_ID_Y, DIRECTION_CW, 200, 50, 1600, POS_MODE_RELATIVE);
+// 两个电机立即开始并行运动！
+```
+
+---
+
+### 4.5 等待电机完成
+
+```c
+esp_err_t motor_wait_done(uint32_t motor_mask, uint32_t timeout_ms);
+```
+
+**功能**：等待指定电机组合完成运动（阻塞）
+
+**参数解析**：
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `motor_mask` | uint32_t | 电机掩码组合 |
+| `timeout_ms` | uint32_t | 最大等待时间（毫秒） |
+
+**电机掩码定义**：
+```c
+#define MOTOR_MASK_X   0x01  // X轴
+#define MOTOR_MASK_Y   0x02  // Y轴
+#define MOTOR_MASK_Z   0x04  // Z轴
+#define MOTOR_MASK_A   0x08  // A轴
+```
+
+**返回值**：
+- `ESP_OK`：所有指定电机已完成
+- `ESP_FAIL`：超时，部分电机未完成
+
+**调用示例**：
+```c
+// 等待 X 和 Y 轴同时完成
+motor_wait_done(MOTOR_MASK_X | MOTOR_MASK_Y, 5000);
+
+// 只等待 Z 轴完成
+motor_wait_done(MOTOR_MASK_Z, 3000);
+
+// 等待所有电机完成
+motor_wait_done(MOTOR_MASK_X | MOTOR_MASK_Y | MOTOR_MASK_Z, 10000);
+```
+
+---
+
+### 4.6 清除完成标志
+
+```c
+void motor_clear_done(uint32_t motor_mask);
+```
+
+**功能**：清除指定电机的完成标志（用于下一次运动前）
+
+**调用示例**：
+```c
+motor_clear_done(MOTOR_MASK_X | MOTOR_MASK_Y);
+motor_move_submit(MOTOR_ID_X, ...);
+motor_move_submit(MOTOR_ID_Y, ...);
+motor_wait_done(MOTOR_MASK_X | MOTOR_MASK_Y, 5000);
+```
+
+---
+
+### 4.7 查询运动状态
+
+```c
+bool motor_is_moving(uint8_t motor_id);
+```
+
+**功能**：查询指定电机是否正在运动
+
+**返回值**：
+- `true`：电机正在运动
+- `false`：电机空闲
+
+**调用示例**：
+```c
+if (motor_is_moving(MOTOR_ID_X)) {
+    // X轴正在运动
+}
+```
+
+---
+
+### 4.8 完整使用流程
+
+```c
+void parallel_move_demo(void)
+{
+    // 1. 初始化
+    stepper_motor_init(UART_NUM_2, GPIO_NUM_11, GPIO_NUM_12);
+    motor_tasks_init();
+    
+    // 2. 使能电机
+    motor_enable(MOTOR_ID_X, true);
+    motor_enable(MOTOR_ID_Y, true);
+    motor_enable(MOTOR_ID_Z, true);
+    
+    // 3. 清除完成标志
+    motor_clear_done(MOTOR_MASK_X | MOTOR_MASK_Y);
+    
+    // 4. 同时提交 X 和 Y 轴命令
+    motor_move_submit(MOTOR_ID_X, DIRECTION_CW, 200, 50, 1600, POS_MODE_RELATIVE);
+    motor_move_submit(MOTOR_ID_Y, DIRECTION_CW, 200, 50, 1600, POS_MODE_RELATIVE);
+    
+    // 5. 等待两个电机都完成
+    motor_wait_done(MOTOR_MASK_X | MOTOR_MASK_Y, 5000);
+    
+    printf("X and Y both reached!\n");
+}
+```
+
+---
+
+### 4.9 与 GCode 控制器集成
+
+`writer_controller.c` 的 `motor_move_callback` 已自动使用异步 API：
+
+```c
+// G1 X30 Y10 F500 执行时：
+motor_clear_done(MOTOR_MASK_X | MOTOR_MASK_Y);
+motor_move_submit(MOTOR_ID_X, x_dir, speed, accel, pulses_x, POS_MODE_RELATIVE);
+motor_move_submit(MOTOR_ID_Y, y_dir, speed, accel, pulses_y, POS_MODE_RELATIVE);
+motor_wait_done(MOTOR_MASK_X | MOTOR_MASK_Y, 15000);
+```
+
+X 和 Y 轴会**同时启动**，各自独立轮询到位状态，完成时设置 EventGroup 位。
+
+---
+
+## 5. 写字机控制 API
+
+### 5.1 初始化
 
 ```c
 void plotter_init(uint16_t default_speed, uint8_t default_accel);
@@ -295,7 +501,7 @@ plotter_set_home(0, 0, 0); // 设置原点在(0,0,0)
 
 ---
 
-### 4.2 抬笔/落笔控制
+### 5.2 抬笔/落笔控制
 
 ```c
 void plotter_pen_up(void);
@@ -314,7 +520,7 @@ plotter_pen_down();  // 落下笔尖（接触纸张）
 
 ---
 
-### 4.3 坐标移动
+### 5.3 坐标移动
 
 ```c
 void plotter_move_to(float x, float y, float z);
@@ -340,9 +546,9 @@ plotter_move_relative(10, 0, 0); // 相对当前位置X轴移动10mm
 
 ---
 
-### 4.4 图形绘制
+### 5.4 图形绘制
 
-#### 4.4.1 绘制直线
+#### 5.4.1 绘制直线
 
 ```c
 void plotter_draw_line(float x1, float y1, float x2, float y2);
@@ -355,7 +561,7 @@ void plotter_draw_line(float x1, float y1, float x2, float y2);
 plotter_draw_line(10, 10, 100, 50);  // 绘制从(10,10)到(100,50)的直线
 ```
 
-#### 4.4.2 绘制矩形
+#### 5.4.2 绘制矩形
 
 ```c
 void plotter_draw_rectangle(float x, float y, float width, float height);
@@ -373,7 +579,7 @@ void plotter_draw_rectangle(float x, float y, float width, float height);
 plotter_draw_rectangle(20, 20, 80, 50);  // 绘制80x50的矩形
 ```
 
-#### 4.4.3 绘制圆形
+#### 5.4.3 绘制圆形
 
 ```c
 void plotter_draw_circle(float cx, float cy, float radius);

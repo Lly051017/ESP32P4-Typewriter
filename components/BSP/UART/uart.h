@@ -22,8 +22,8 @@
  * @brief UART0 配置参数
  * @{
  */
-#define UART0_TX_PIN       GPIO_NUM_37      /**< UART0 TX引脚 - GPIO37 */
-#define UART0_RX_PIN       GPIO_NUM_38       /**< UART0 RX引脚 - GPIO38 */
+#define UART0_TX_PIN       GPIO_NUM_12      /**< UART0 TX引脚 - GPIO12 */
+    #define UART0_RX_PIN       GPIO_NUM_11      /**< UART0 RX引脚 - GPIO11 */
 #define UART0_BAUD_RATE    115200           /**< 波特率 - 115200 */
 #define UART0_BUF_SIZE     1024              /**< 硬件FIFO缓冲区大小 */
 #define UART0_FIFO_SIZE    2048              /**< 软件环形缓冲区大小 */
