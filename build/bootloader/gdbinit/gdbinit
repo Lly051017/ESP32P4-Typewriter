@@ -1,0 +1,2 @@
+source C:/Users/Lly/Desktop/ESP32Project/writeboot_WiFi/build/bootloader/gdbinit/symbols
+source C:/Users/Lly/Desktop/ESP32Project/writeboot_WiFi/build/bootloader/gdbinit/connect

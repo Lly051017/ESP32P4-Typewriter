@@ -26,9 +26,12 @@ static mc_dwell_callback_t g_dwell_callback = NULL;
 
 void mc_init(const mc_config_t *config)
 {
-    if (config) {
+    if (config) 
+    {
         memcpy(&g_mc_config, config, sizeof(mc_config_t));
-    } else {
+    } 
+    else 
+    {
         memset(&g_mc_config, 0, sizeof(mc_config_t));
         g_mc_config.default_feed_rate = 500.0f;
         g_mc_config.rapid_rate = 3000.0f;
@@ -42,7 +45,8 @@ void mc_init(const mc_config_t *config)
         }
     }
     
-    planner_config_t pl_config = {
+    planner_config_t pl_config = 
+    {
         .default_feed_rate = g_mc_config.default_feed_rate,
         .default_rapid_rate = g_mc_config.rapid_rate,
         .default_acceleration = g_mc_config.acceleration[0],
@@ -78,22 +82,26 @@ void mc_reset(void)
 
 mc_error_t mc_linear(float *target, float feed_rate, bool is_rapid)
 {
-    if (!target) {
+    if (!target) 
+    {
         return MC_ERROR_PARAM;
     }
     
-    if (!is_rapid && feed_rate <= 0) {
+    if (!is_rapid && feed_rate <= 0) 
+    {
         return MC_ERROR_FEEDRATE;
     }
     
-    if (g_stop_requested) {
+    if (g_stop_requested) 
+    {
         g_stop_requested = false;
         return MC_ERROR_BUSY;
     }
     
     g_is_running = true;
     
-    if (g_move_callback) {
+    if (g_move_callback) 
+    {
         g_move_callback(target, feed_rate, is_rapid);
     }
     
@@ -125,15 +133,18 @@ mc_error_t mc_arc(float *target, float *offset, float radius,
                   uint8_t axis_0, uint8_t axis_1, uint8_t axis_linear,
                   bool is_clockwise, float feed_rate)
 {
-    if (!target || !offset) {
+    if (!target || !offset) 
+    {
         return MC_ERROR_PARAM;
     }
     
-    if (feed_rate <= 0) {
+    if (feed_rate <= 0) 
+    {
         return MC_ERROR_FEEDRATE;
     }
     
-    if (g_stop_requested) {
+    if (g_stop_requested) 
+    {
         g_stop_requested = false;
         return MC_ERROR_BUSY;
     }
@@ -149,12 +160,15 @@ mc_error_t mc_arc(float *target, float *offset, float radius,
     float angular_travel = atan2f(rt_axis1 * offset[axis_0] - rt_axis0 * offset[axis_1], 
                                    rt_axis0 * offset[axis_0] + rt_axis1 * offset[axis_1]);
     
-    if (is_clockwise) {
-        if (angular_travel >= 0) {
+    if (is_clockwise) 
+    {
+        if (angular_travel >= 0) 
+        {
             angular_travel -= 2.0f * M_PI;
         }
     } else {
-        if (angular_travel <= 0) {
+        if (angular_travel <= 0) 
+        {
             angular_travel += 2.0f * M_PI;
         }
     }
@@ -176,7 +190,8 @@ mc_error_t mc_arc(float *target, float *offset, float radius,
     float radius_axis0 = -offset[axis_0];
     float radius_axis1 = -offset[axis_1];
     
-    for (uint32_t i = 1; i <= segments; i++) {
+    for (uint32_t i = 1; i <= segments; i++) 
+    {
         if (g_stop_requested) {
             g_is_running = false;
             g_stop_requested = false;
@@ -212,11 +227,13 @@ mc_error_t mc_arc(float *target, float *offset, float radius,
 
 mc_error_t mc_dwell(float seconds)
 {
-    if (seconds <= 0) {
+    if (seconds <= 0) 
+    {
         return MC_OK;
     }
     
-    if (g_dwell_callback) {
+    if (g_dwell_callback) 
+    {
         g_dwell_callback(seconds);
     }
     
@@ -238,7 +255,8 @@ void mc_set_position(float x, float y, float z)
 
 void mc_get_position(float *pos)
 {
-    if (pos) {
+    if (pos) 
+    {
         memcpy(pos, g_position, sizeof(float) * MC_MAX_AXES);
     }
 }

@@ -23,6 +23,7 @@
 #include "stepper_motor.h"
 #include "wifi_config.h"
 #include "lwip_demo.h"
+#include "log.h"
 
 /* FreeRTOS相关头文件 */
 #include "freertos/FreeRTOS.h"
@@ -88,6 +89,7 @@ void app_main(void)
     }
 
     /** 初始化各外设 */
+    log_init();   /**< 异步日志任务(需在使用log_print的模块之前初始化) */
     led_init();   /**< LED初始化 */
     key_init();   /**< 按键初始化 */
     stepper_motor_init(UART_NUM_2, GPIO_NUM_11, GPIO_NUM_12); /**< 电机UART: GPIO11=TX, GPIO12=RX */
@@ -161,6 +163,7 @@ void key_task(void *pvParameters)
 
         /** 延时10ms再次扫描 */
         vTaskDelay(10);
+        
     }
 }
 
@@ -192,61 +195,101 @@ void Gcode_Write_Task(void *pvParameters)
 {
     (void)pvParameters;
 
-    stepper_delay_ms(2000);
+    printf("\n========================================\n");
+    printf("  G代码写字Demo: 书写 \"刘彭\" (含抬笔)\n");
+    printf("========================================\n");
 
-    printf("\n=== ESP32 Plotter GCode Demo ===\n");
-    printf("Plotter initializing...\n");
-    plotter_init(200, 50);
+    /** 初始化写字控制器（默认配置: X/Y=80脉冲/mm, Z=100脉冲/mm）
+     *  注意: UART与per-motor任务已在app_main中初始化, 此处只初始化运动/G代码层
+     *  抬笔/落笔由Z轴(电机3)控制: Z5=抬笔, Z0=落笔 */
+    writer_init(NULL);
+    writer_set_position(0, 0, 0);
 
-    writer_config_t config = {
-        .steps_per_mm = {80.0f, 80.0f, 40.0f},
-        .max_rate_mm_min = {3000.0f, 3000.0f, 1000.0f},
-        .acceleration_mm_s2 = {500.0f, 500.0f, 200.0f},
-        .max_travel_mm = {200.0f, 200.0f, 50.0f},
-        .default_feed_rate = 500.0f,
-        .rapid_rate = 3000.0f,
-        .pen_up_pos = 5.0f,
-        .pen_down_pos = 0.0f,
-        .pen_lift_delay_ms = 100,
-        .motor_ids = {MOTOR_ID_X, MOTOR_ID_Y, MOTOR_ID_Z},
-        .invert_dir = {false, false, false},
+    /** ★★★ 字体大小: 改这个缩放因子即可 ★★★
+     *  LETTER_SCALE = 1.0 时约 36mm 高; 0.5≈18mm高, 0.7≈25mm高 */
+    const float LETTER_SCALE = 0.5f;
+
+    /** 抬笔高度(mm): Z轴抬到多高才算"离纸"。笔头/纸面不平整时需加大。
+     *  steps_per_mm[Z]=100, 所以 Z8=800脉冲≈8mm 抬笔 */
+    #define PEN_UP_MM   8.0f
+    #define PEN_DOWN_MM 0.0f
+
+    /** "刘彭" 的笔画顶点(未缩放,mm,实际=坐标×LETTER_SCALE), 直线段近似。
+     *  pen=0: 抬笔移到该点;  pen=1: 落笔画线到该点。
+     *
+     *  坐标系(逻辑mm, 经旋转+CoreXY变换后映射到物理纸面):
+     *    刘 在左(x=2..32),  彭 在右(x=36..70);  y↑ 为字的上方。
+     *  两字等高(≈36mm), 顶部对齐 y≈42。
+     *
+     *  刘 = 文 + 刂;  彭 = 壴 + 彡(三撇)
+     */
+    typedef struct { float x, y; int pen; } stroke_pt_t;
+    static const stroke_pt_t pts[] =
+    {
+        /* ===== 刘 (x=2..32, y≈6..42, 等高36) ===== */
+        /* 文·点  */ {12, 42, 0}, {13, 39,  1},
+        /* 文·横  */ {3,  37, 0}, {18, 37,  1},
+        /* 文·撇↙ */ {16, 35, 0}, {2,  6,   1},
+        /* 文·捺↘ */ {5,  35, 0}, {19, 6,   1},
+        /* 刂·短竖 */ {24, 35, 0}, {24, 16,  1},
+        /* 刂·竖钩 */ {30, 42, 0}, {30, 8,   1}, {27, 11,  1},
+
+        /* ===== 彭 (x=36..70, y≈6..42, 等高36) ===== */
+        /* 壴·上横 */ {42, 42, 0}, {54, 42,  1},
+        /* 壴·短竖 */ {48, 42, 0}, {48, 35,  1},
+        /* 壴·中横 */ {37, 34, 0}, {58, 34,  1},
+        /* 壴·口   */ {42, 31, 0}, {42, 22,  1}, {54, 22, 1}, {54, 31,  1}, {42, 31,  1},
+        /* 壴·下横 */ {37, 19, 0}, {59, 19,  1},
+        /* 壴·左腿 */ {44, 19, 0}, {42, 9,   1},
+        /* 壴·右腿 */ {52, 19, 0}, {54, 9,   1},
+        /* 彡·撇1 */ {67, 42, 0}, {58, 35,  1},
+        /* 彡·撇2 */ {68, 35, 0}, {59, 28,  1},
+        /* 彡·撇3 */ {69, 28, 0}, {60, 21,  1},
     };
+    int n = sizeof(pts) / sizeof(pts[0]);
 
-    writer_init(&config);
-    printf("Writer initialized.\n");
+    char line[64];
 
-    printf("\n--- GCode: Draw Square (20x20mm) ---\n");
-    writer_execute_gcode("G21");              writer_wait_idle();
-    writer_execute_gcode("G90");              writer_wait_idle();
-    writer_execute_gcode("G0 Z5");            writer_wait_idle();
-    writer_execute_gcode("G0 X10 Y10");       writer_wait_idle();
-    writer_execute_gcode("G1 Z0 F500");       writer_wait_idle();
-    writer_execute_gcode("G1 X30 Y10");       writer_wait_idle();
-    writer_execute_gcode("G1 X30 Y30");       writer_wait_idle();
-    writer_execute_gcode("G1 X10 Y30");       writer_wait_idle();
-    writer_execute_gcode("G1 X10 Y10");       writer_wait_idle();
-    writer_execute_gcode("G0 Z5");            writer_wait_idle();
+    printf("\n[写字] 书写 \"刘彭\" (缩放 %.2f, 约 %.0fmm 高, %d 个点)...\n",
+           LETTER_SCALE, 36.0f * LETTER_SCALE, n);
 
-    printf("\n--- GCode: Diagonal Line (X+Y simultaneous) ---\n");
-    writer_execute_gcode("G0 X50 Y50");       writer_wait_idle();
-    writer_execute_gcode("G1 Z0 F500");       writer_wait_idle();
-    writer_execute_gcode("G1 X100 Y100");      writer_wait_idle();
-    writer_execute_gcode("G0 Z5");             writer_wait_idle();
+    /** 全部指令一次性入队, 由writer任务连续执行(中途不等待),
+     *  消除分段之间的软件停顿(轮询/打印), 书写更连贯 */
+    writer_execute_gcode("G21");   /**< 公制单位 */
+    writer_execute_gcode("G90");   /**< 绝对坐标 */
 
-    printf("\n--- GCode: Draw Letter 'A' ---\n");
-    writer_execute_gcode("G0 X10 Y10");        writer_wait_idle();
-    writer_execute_gcode("G1 Z0 F500");       writer_wait_idle();
-    writer_execute_gcode("G1 X30 Y50");        writer_wait_idle();
-    writer_execute_gcode("G1 X50 Y10");        writer_wait_idle();
-    writer_execute_gcode("G0 Z5");             writer_wait_idle();
-    writer_execute_gcode("G0 X20 Y30");        writer_wait_idle();
-    writer_execute_gcode("G1 Z0 F500");        writer_wait_idle();
-    writer_execute_gcode("G1 X40 Y30");        writer_wait_idle();
-    writer_execute_gcode("G0 Z5");             writer_wait_idle();
+    int pen_down = -1;  /**< -1未知, 0抬笔, 1落笔 */
+    for (int i = 0; i < n; i++)
+    {
+        /** 按需切换抬笔/落笔, Z高度按PEN_UP_MM/PEN_DOWN_MM */
+        if (pts[i].pen == 1 && pen_down != 1) {
+            snprintf(line, sizeof(line), "G0 Z%.1f", PEN_DOWN_MM);
+            writer_execute_gcode(line);   /**< 落笔 */
+            pen_down = 1;
+        } else if (pts[i].pen == 0 && pen_down != 0) {
+            snprintf(line, sizeof(line), "G0 Z%.1f", PEN_UP_MM);
+            writer_execute_gcode(line);   /**< 抬笔 */
+            pen_down = 0;
+        }
 
-    printf("\n=== All GCode Commands Complete! ===\n");
+        /** 生成移动指令(坐标乘以缩放因子)并入队 */
+        snprintf(line, sizeof(line), "%s X%.2f Y%.2f F300",
+                 pts[i].pen ? "G1" : "G0",
+                 pts[i].x * LETTER_SCALE, pts[i].y * LETTER_SCALE);
+        writer_execute_gcode(line);
+    }
+    snprintf(line, sizeof(line), "G0 Z%.1f", PEN_UP_MM);
+    writer_execute_gcode(line);   /**< 写完抬笔 */
 
-    while (1) {
-        vTaskDelay(pdMS_TO_TICKS(10));
+    /** 全部入队后, 等待整字写完 */
+    writer_wait_idle();
+
+    printf("\n========================================\n");
+    printf("  写字完成!\n");
+    printf("========================================\n");
+
+    while (1) 
+    {
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }

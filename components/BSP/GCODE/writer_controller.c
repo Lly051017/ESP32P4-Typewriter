@@ -24,6 +24,24 @@ static writer_status_t g_status;
 static float g_current_pos[WRITER_MAX_AXES];
 static float g_current_feed_rate;
 
+/** 各电机当前的绝对脉冲位置(经旋转+CoreXY变换后)。
+ *  每次运动用"目标绝对脉冲 - 当前绝对脉冲"作为增量, 使取整误差不累积:
+ *  逻辑位置始终用精确浮点, 电机位置始终四舍五入到最接近的整脉冲, 自动纠偏。 */
+static int32_t g_accum_px = 0;
+static int32_t g_accum_py = 0;
+static int32_t g_accum_pz = 0;
+
+/** ★ 反向间隙补偿(脉冲): 电机换向时, 皮带/齿隙有一段空程, 先空转这么多脉冲
+ *  才真正带动笔头。换向时多发这些脉冲吃掉空程, 消除拐角缺口、中横不重合、
+ *  收尾小尾巴等问题。需按实际机械微调:
+ *    偏小 -> 拐角仍有缝隙;  偏大 -> 拐角过冲(出头)。  设 0 关闭补偿。
+ *  (80脉冲/mm时, 8≈0.1mm, 16≈0.2mm) */
+#define BACKLASH_PULSES 10
+
+/** 各电机上一次的运动方向(+1/-1, 0=未知), 用于检测换向 */
+static int s_last_dir_x = 0;
+static int s_last_dir_y = 0;
+
 static writer_status_callback_t g_status_callback = NULL;
 static writer_complete_callback_t g_complete_callback = NULL;
 
@@ -50,23 +68,59 @@ static void update_status(void)
     }
 }
 
+/**
+ * @brief  把逻辑坐标(mm)经"旋转+CoreXY"变换为各电机的绝对脉冲位置(四舍五入)
+ * @param  p:  逻辑坐标数组[X,Y,Z](mm)
+ * @param  px/py/pz: 输出的各电机绝对脉冲
+ */
+static void logical_to_motor_pulses(const float *p, int32_t *px, int32_t *py, int32_t *pz)
+{
+    float x = p[WRITER_X_AXIS];
+    float y = p[WRITER_Y_AXIS];
+    float z = p[WRITER_Z_AXIS];
+
+    /** ---- 第1步: 旋转逻辑坐标(调整字的朝向) ----
+     *  当前设为【顺时针90°】: (x,y) -> (y,-x)
+     *  换其他朝向只改这两行:
+     *    不旋转    : rx = x;  ry = y;
+     *    顺时针90° : rx = y;  ry = -x;   <-- 当前
+     *    180°      : rx = -x; ry = -y;
+     *    逆时针90° : rx = -y; ry = x;
+     *  若左右/上下镜像, 把 rx 或 ry 其一整体取反即可 */
+    float rx =  y;
+    float ry = -x;
+
+    /** ---- 第2步: CoreXY/H-bot 逆解 ----
+     *  电机X = 旋转后X + 旋转后Y, 电机Y = 旋转后X - 旋转后Y */
+    float mx = rx + ry;
+    float my = rx - ry;
+
+    /** 四舍五入到最接近的整脉冲(比截断更准, 误差居中) */
+    *px = (int32_t)lroundf(mx * g_config.steps_per_mm[WRITER_X_AXIS]);
+    *py = (int32_t)lroundf(my * g_config.steps_per_mm[WRITER_Y_AXIS]);
+    *pz = (int32_t)lroundf(z  * g_config.steps_per_mm[WRITER_Z_AXIS]);
+}
+
 static void motor_move_callback(float *target, float feed_rate, bool is_rapid)
 {
-    float dx = target[WRITER_X_AXIS] - g_current_pos[WRITER_X_AXIS];
-    float dy = target[WRITER_Y_AXIS] - g_current_pos[WRITER_Y_AXIS];
-    float dz = target[WRITER_Z_AXIS] - g_current_pos[WRITER_Z_AXIS];
+    /** 目标的绝对电机脉冲; 增量 = 目标绝对 - 当前绝对(累加器),
+     *  逻辑位置用精确浮点, 电机位置四舍五入到整脉冲, 取整误差不累积 */
+    int32_t tpx, tpy, tpz;
+    logical_to_motor_pulses(target, &tpx, &tpy, &tpz);
 
-    int32_t pulses_x = (int32_t)(dx * g_config.steps_per_mm[WRITER_X_AXIS]);
-    int32_t pulses_y = (int32_t)(dy * g_config.steps_per_mm[WRITER_Y_AXIS]);
-    int32_t pulses_z = (int32_t)(dz * g_config.steps_per_mm[WRITER_Z_AXIS]);
+    int32_t pulses_x = tpx - g_accum_px;
+    int32_t pulses_y = tpy - g_accum_py;
+    int32_t pulses_z = tpz - g_accum_pz;
 
     if (abs(pulses_x) < 2 && abs(pulses_y) < 2 && abs(pulses_z) < 2) {
+        /** 移动太小: 跳过且不更新累加器, 余量留到下次累积(自动纠偏) */
         memcpy(g_current_pos, target, sizeof(float) * WRITER_MAX_AXES);
         return;
     }
 
-    uint16_t speed_rpm = 200;
-    uint8_t accel = 50;
+    uint16_t base_rpm = 60;  /**< 书写速度(RPM), 越小越慢越稳; 写字用低速更清晰 */
+    uint8_t accel = 250; /**< 加减速档位高=斜坡极短(~10ms), 使运动几乎全程匀速, XY插补成直线
+                          *  (注意:档位0=瞬间满速,反而最易堵转;此处用高档位平滑快速到速) */
     motor_direction_t x_dir = (pulses_x >= 0) ? DIRECTION_CW : DIRECTION_CCW;
     motor_direction_t y_dir = (pulses_y >= 0) ? DIRECTION_CW : DIRECTION_CCW;
     motor_direction_t z_dir = (pulses_z >= 0) ? DIRECTION_CW : DIRECTION_CCW;
@@ -75,32 +129,67 @@ static void motor_move_callback(float *target, float feed_rate, bool is_rapid)
     if (g_config.invert_dir[WRITER_Y_AXIS]) y_dir = (y_dir == DIRECTION_CW) ? DIRECTION_CCW : DIRECTION_CW;
     if (g_config.invert_dir[WRITER_Z_AXIS]) z_dir = (z_dir == DIRECTION_CW) ? DIRECTION_CCW : DIRECTION_CW;
 
+    /** XY轴线性插补: 速度按各轴脉冲数等比例缩放, 使两轴同时到达终点,
+     *  从而画出直线而非折线(长轴满速, 短轴按比例降速) */
+    int32_t ax = abs(pulses_x);
+    int32_t ay = abs(pulses_y);
+    int32_t axy_max = (ax > ay) ? ax : ay;
+
+    uint16_t x_rpm = base_rpm;
+    uint16_t y_rpm = base_rpm;
+    if (axy_max > 0) {
+        x_rpm = (uint16_t)((uint32_t)base_rpm * ax / axy_max);
+        y_rpm = (uint16_t)((uint32_t)base_rpm * ay / axy_max);
+        if (ax > 0 && x_rpm < 10) x_rpm = 10;   /**< 防止速度过低堵转 */
+        if (ay > 0 && y_rpm < 10) y_rpm = 10;
+    }
+
+    /** 反向间隙补偿: 电机换向时, 在实际脉冲数上多发BACKLASH_PULSES吃掉空程。
+     *  补偿脉冲只用于多走、不计入位置累加器(累加器仍按真实增量), 故位置不漂移。 */
+    int32_t sx = ax, sy = ay;
+    if (ax != 0) {
+        int dirx = (pulses_x > 0) ? 1 : -1;
+        if (s_last_dir_x != 0 && dirx != s_last_dir_x) sx += BACKLASH_PULSES;
+        s_last_dir_x = dirx;
+    }
+    if (ay != 0) {
+        int diry = (pulses_y > 0) ? 1 : -1;
+        if (s_last_dir_y != 0 && diry != s_last_dir_y) sy += BACKLASH_PULSES;
+        s_last_dir_y = diry;
+    }
+
     uint32_t mask = 0;
 
+    /** Z轴(抬笔/落笔)单独运动, 带加减速防止笔头冲击 */
     if (abs(pulses_z) != 0) {
         motor_clear_done(MOTOR_MASK_Z);
-        motor_move_submit(MOTOR_ID_Z, z_dir, speed_rpm / 2,
-                         accel, abs(pulses_z), POS_MODE_RELATIVE);
+        motor_move_submit(MOTOR_ID_Z, z_dir, base_rpm / 2,
+                         50, abs(pulses_z), POS_MODE_RELATIVE);
         mask |= MOTOR_MASK_Z;
     }
 
-    if (abs(pulses_x) != 0) {
+    if (ax != 0) {
         motor_clear_done(MOTOR_MASK_X);
-        motor_move_submit(MOTOR_ID_X, x_dir, speed_rpm,
-                         accel, abs(pulses_x), POS_MODE_RELATIVE);
+        motor_move_submit(MOTOR_ID_X, x_dir, x_rpm,
+                         accel, sx, POS_MODE_RELATIVE);
         mask |= MOTOR_MASK_X;
     }
 
-    if (abs(pulses_y) != 0) {
+    if (ay != 0) {
         motor_clear_done(MOTOR_MASK_Y);
-        motor_move_submit(MOTOR_ID_Y, y_dir, speed_rpm,
-                         accel, abs(pulses_y), POS_MODE_RELATIVE);
+        motor_move_submit(MOTOR_ID_Y, y_dir, y_rpm,
+                         accel, sy, POS_MODE_RELATIVE);
         mask |= MOTOR_MASK_Y;
     }
 
     if (mask) {
         motor_wait_done(mask, 15000);
     }
+
+    /** 更新脉冲累加器到本次实际发出的绝对位置(= tpx/tpy/tpz) */
+    g_accum_px += pulses_x;
+    g_accum_py += pulses_y;
+    g_accum_pz += pulses_z;
 
     memcpy(g_current_pos, target, sizeof(float) * WRITER_MAX_AXES);
     g_current_feed_rate = feed_rate;
@@ -281,10 +370,12 @@ esp_err_t writer_execute_gcode(const char *line)
     strncpy(cmd.line, line, MAX_LINE_LENGTH - 1);
     cmd.line[MAX_LINE_LENGTH - 1] = '\0';
     
-    if (xQueueSend(g_command_queue, &cmd, pdMS_TO_TICKS(100)) != pdTRUE) {
+    /** 队满时阻塞等待(背压), 而不是超时丢弃 —— 笔画多时命令数会远超队列深度,
+     *  阻塞可保证一条不丢(主任务自动节流到writer处理速度), 字不会缺笔 */
+    if (xQueueSend(g_command_queue, &cmd, portMAX_DELAY) != pdTRUE) {
         return ESP_FAIL;
     }
-    
+
     g_status.total_blocks++;
     
     return ESP_OK;
@@ -341,6 +432,15 @@ void writer_set_position(float x, float y, float z)
     g_current_pos[WRITER_X_AXIS] = x;
     g_current_pos[WRITER_Y_AXIS] = y;
     g_current_pos[WRITER_Z_AXIS] = z;
+
+    /** 同步脉冲累加器到该绝对位置, 保证增量计算的基准一致 */
+    float p[WRITER_MAX_AXES] = { x, y, z };
+    logical_to_motor_pulses(p, &g_accum_px, &g_accum_py, &g_accum_pz);
+
+    /** 重置换向状态, 下一次运动不做补偿(方向未知) */
+    s_last_dir_x = 0;
+    s_last_dir_y = 0;
+
     mc_set_position(x, y, z);
 }
 

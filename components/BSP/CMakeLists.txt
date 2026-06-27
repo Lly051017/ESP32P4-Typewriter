@@ -3,14 +3,16 @@ set(src_dirs
 			KEY
             UART
             STEPPER
-            GCODE)
+            GCODE
+            LOG)
 
 set(include_dirs
             LED
 			KEY
             UART
             STEPPER
-            GCODE)
+            GCODE
+            LOG)
 
 set(requires
             driver
